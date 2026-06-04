@@ -197,7 +197,7 @@
 
         <button id="micBtn" class="mic-btn" title="Start the call">&#127908;</button>
         <div id="micLabel" class="mic-label">Start the call</div>
-        <div class="mic-hint">Mic + voice work best in Chrome. Other browsers: type your replies.</div>
+        <div class="mic-hint">Push to talk: tap the mic to start, tap again to send. Real Deepgram speech-to-text + Cartesia voice, or type your replies.</div>
 
         <div id="convo" class="convo"></div>
 
@@ -323,11 +323,11 @@
     }
 
     // ---- Two-way conversation engine ----
-    // The dialogue brain lives server-side (POST /api/converse), so the browser only
-    // does audio I/O: speech-in via the Web Speech API (Chromium) and speech-out via
-    // speechSynthesis (all modern browsers). Turn-taking is explicit: the mic is OFF
-    // while the agent speaks, so it never hears itself (no echo loop). A text box is
-    // the fallback for browsers without recognition.
+    // The dialogue brain lives server-side (POST /api/converse). The browser only does
+    // audio I/O, using the SAME providers as the CLI: it records a turn and posts it to
+    // /api/stt (Deepgram), then speaks the reply via /api/tts (Cartesia). Push-to-talk:
+    // the mic is only on while you hold the turn, so it never hears the agent (no echo).
+    // A text box is the fallback when the mic is unavailable or a key is missing.
     const DRUG = "Adderall XR", DOSE = "20 mg";
     const micBtn = document.getElementById("micBtn");
     const micLabel = document.getElementById("micLabel");
@@ -335,21 +335,9 @@
     const callCtl = document.getElementById("callCtl");
     const textIn = document.getElementById("textIn");
     const textGo = document.getElementById("textGo");
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const canSpeak = "speechSynthesis" in window;
 
-    let history = [], callActive = false, listening = false, speaking = false;
-    let recog = null;
-
-    // Pick a warmer voice when one is available (voices load async in some browsers).
-    let preferredVoice = null;
-    function pickVoice() {
-      const vs = canSpeak ? window.speechSynthesis.getVoices() : [];
-      const liked = ["Samantha", "Google US English", "Microsoft Aria", "Microsoft Jenny", "Serena"];
-      preferredVoice = liked.map(n => vs.find(v => v.name && v.name.includes(n))).find(Boolean)
-        || vs.find(v => v.lang && v.lang.startsWith("en")) || null;
-    }
-    if (canSpeak) { pickVoice(); window.speechSynthesis.onvoiceschanged = pickVoice; }
+    let history = [], callActive = false, recording = false, speaking = false;
+    let micStream = null, recorder = null, chunks = [];
 
     function addBubble(role, text) {
       const div = document.createElement("div");
@@ -360,37 +348,64 @@
     }
 
     function setStatus(s) {
-      micBtn.classList.toggle("listening", s === "listening");
+      micBtn.classList.toggle("listening", s === "recording");
       micLabel.textContent = ({
         idle: "Start the call", opening: "Calling...", speaking: "Agent speaking...",
-        listening: "Your turn, listening...", thinking: "...",
-        typeturn: "Your turn, type your reply below", done: "Call complete. Tap to call again.",
+        yourturn: "Your turn, tap to talk", recording: "Recording, tap to send",
+        thinking: "...", done: "Call complete. Tap to call again.",
       })[s] || "";
     }
 
-    function stopListening() { if (recog && listening) { try { recog.stop(); } catch (e) {} } listening = false; }
-
-    function listen() {
-      if (!callActive) return;
-      if (!recog) { setStatus("typeturn"); return; }
-      try { recog.start(); listening = true; setStatus("listening"); } catch (e) { /* already on */ }
+    async function ensureMic() {
+      if (micStream) return true;
+      try { micStream = await navigator.mediaDevices.getUserMedia({ audio: true }); return true; }
+      catch (e) { micLabel.textContent = "Mic permission denied. Type your reply below."; return false; }
     }
 
-    function speak(text) {
-      return new Promise((res) => {
-        if (!canSpeak) { res(); return; }
-        stopListening();
-        speaking = true;
-        setStatus("speaking");
-        const u = new SpeechSynthesisUtterance(text);
-        u.lang = "en-US";
-        if (preferredVoice) u.voice = preferredVoice;
-        u.rate = 1.05; u.pitch = 1.0;  // a touch quicker = more natural on a call
-        const fin = () => { speaking = false; res(); };
-        u.onend = fin; u.onerror = fin;
-        window.speechSynthesis.cancel();
-        window.speechSynthesis.speak(u);
-      });
+    async function startRecording() {
+      if (!callActive || speaking || recording) return;
+      if (!(await ensureMic())) return;
+      chunks = [];
+      recorder = new MediaRecorder(micStream);
+      recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+      recorder.onstop = onRecordingStop;
+      recorder.start();
+      recording = true; setStatus("recording");
+    }
+
+    function stopRecording() {
+      if (recorder && recording) { try { recorder.stop(); } catch (e) {} }
+      recording = false;
+    }
+
+    async function onRecordingStop() {
+      const blob = new Blob(chunks, { type: (recorder && recorder.mimeType) || "audio/webm" });
+      setStatus("thinking");
+      let transcript = "";
+      try {
+        const r = await fetch("/api/stt", { method: "POST", headers: { "Content-Type": blob.type }, body: blob });
+        const j = await r.json();
+        if (j.error) { micLabel.textContent = j.error; setStatus("yourturn"); return; }
+        transcript = (j.transcript || "").trim();
+      } catch (e) { micLabel.textContent = "Could not transcribe. Tap to retry or type."; setStatus("yourturn"); return; }
+      if (!transcript) { micLabel.textContent = "Did not catch that. Tap to try again."; setStatus("yourturn"); return; }
+      await handleUserTurn(transcript);
+    }
+
+    async function speak(text) {
+      speaking = true; setStatus("speaking");
+      try {
+        const r = await fetch("/api/tts", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }),
+        });
+        if (r.ok) {
+          const url = URL.createObjectURL(await r.blob());
+          const audio = new Audio(url);
+          await new Promise((res) => { audio.onended = res; audio.onerror = res; audio.play().catch(res); });
+          URL.revokeObjectURL(url);
+        }
+      } catch (e) { /* tts unavailable: continue without audio */ }
+      speaking = false;
     }
 
     async function converse() {
@@ -416,13 +431,12 @@
         });
       }
       await speak(data.reply);
-      if (data.done) endCall(); else listen();
+      if (data.done) endCall(); else setStatus("yourturn");
     }
 
     async function handleUserTurn(text) {
       text = (text || "").trim();
       if (!text || !callActive || speaking) return;
-      stopListening();
       addBubble("pharmacist", text);
       history.push({ role: "pharmacist", text });
       textIn.value = "";
@@ -440,8 +454,7 @@
     }
 
     function endCall() {
-      callActive = false; stopListening();
-      if (canSpeak) window.speechSynthesis.cancel();
+      callActive = false; stopRecording();
       setStatus("done");
       textIn.disabled = true; textGo.disabled = true;
       callCtl.innerHTML = "";
@@ -449,24 +462,9 @@
 
     micBtn.addEventListener("click", () => {
       if (!callActive) { startCall(); return; }
-      if (!speaking) listen();  // mid-call: re-listen if it missed you
+      if (speaking) return;
+      if (recording) stopRecording(); else startRecording();
     });
-
-    if (SR) {
-      recog = new SR();
-      recog.lang = "en-US"; recog.interimResults = false; recog.maxAlternatives = 1;
-      recog.addEventListener("result", (ev) => handleUserTurn(ev.results[0][0].transcript));
-      recog.addEventListener("end", () => { listening = false; micBtn.classList.remove("listening"); });
-      recog.addEventListener("error", (ev) => {
-        listening = false; micBtn.classList.remove("listening");
-        if (ev.error === "not-allowed" || ev.error === "service-not-allowed")
-          micLabel.textContent = "Mic denied. Type your reply below.";
-        else if (ev.error === "no-speech" && callActive)
-          micLabel.textContent = "Did not catch that. Tap the mic or type.";
-      });
-    } else {
-      micLabel.textContent = "Start the call (no mic in this browser, type your replies)";
-    }
 
     textGo.addEventListener("click", () => handleUserTurn(textIn.value));
     textIn.addEventListener("keydown", (ev) => { if (ev.key === "Enter") handleUserTurn(textIn.value); });

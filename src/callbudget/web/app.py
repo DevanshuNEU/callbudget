@@ -13,8 +13,8 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 from ..config import REPO_ROOT, RUNS_DIR
@@ -23,6 +23,8 @@ from ..mcp.engine import CallBudgetEngine
 STATIC = Path(__file__).parent / "static"
 CHART = REPO_ROOT / "figures" / "ecf_flywheel.png"
 RESEARCH_JOURNAL = RUNS_DIR / "research_journal.jsonl"
+# Same default Cartesia voice as the terminal path; override with CARTESIA_VOICE_ID.
+CARTESIA_VOICE = "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4"
 
 
 def _load_dotenv() -> None:
@@ -68,6 +70,13 @@ class ConverseBody(BaseModel):
     dose: str = "20 mg"
     caller: str = "Devanshu"  # who the agent discloses it is calling on behalf of
     history: list[ConverseTurn] = []
+
+
+class TTSBody(BaseModel):
+    """Request body for /api/tts: the agent line to speak."""
+
+    text: str
+    voice_id: str | None = None
 
 
 @app.get("/api/predict")
@@ -122,6 +131,82 @@ def converse(body: ConverseBody) -> JSONResponse:
             "record": {"drug": body.drug, "dose": body.dose, **turn.record},
         }
     )
+
+
+def _deepgram_transcribe(audio: bytes, mimetype: str) -> str:
+    """Deepgram prerecorded STT over its REST API (same provider as the terminal)."""
+    import urllib.request
+
+    req = urllib.request.Request(
+        "https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true",
+        data=audio,
+        headers={
+            "Authorization": f"Token {os.environ['DEEPGRAM_API_KEY']}",
+            "Content-Type": mimetype or "audio/webm",
+        },
+    )
+    resp = json.load(urllib.request.urlopen(req, timeout=30))
+    return resp["results"]["channels"][0]["alternatives"][0]["transcript"]
+
+
+def _cartesia_tts(text: str, voice_id: str) -> bytes:
+    """Cartesia neural TTS over its REST API (same provider/voice as the terminal)."""
+    import urllib.request
+
+    body = json.dumps(
+        {
+            "model_id": "sonic-2", "transcript": text,
+            "voice": {"mode": "id", "id": voice_id},
+            "output_format": {"container": "wav", "encoding": "pcm_s16le", "sample_rate": 24000},
+        }
+    ).encode()
+    req = urllib.request.Request(
+        "https://api.cartesia.ai/tts/bytes", data=body,
+        headers={
+            "X-API-Key": os.environ["CARTESIA_API_KEY"],
+            "Cartesia-Version": "2025-04-16",
+            "Content-Type": "application/json",
+        },
+    )
+    return urllib.request.urlopen(req, timeout=30).read()
+
+
+@app.post("/api/stt")
+async def stt(request: Request) -> JSONResponse:
+    """Transcribe a recorded mic turn with Deepgram (the same STT the terminal uses)."""
+    import asyncio
+
+    audio = await request.body()
+    if not audio:
+        return JSONResponse({"error": "empty audio"}, status_code=400)
+    if not os.environ.get("DEEPGRAM_API_KEY"):
+        return JSONResponse(
+            {"error": "speech-to-text unavailable (no DEEPGRAM_API_KEY); type instead"},
+            status_code=503,
+        )
+    ctype = request.headers.get("content-type", "audio/webm")
+    try:
+        transcript = await asyncio.to_thread(_deepgram_transcribe, audio, ctype)
+    except Exception as exc:  # noqa: BLE001 - clean message, never a stack
+        return JSONResponse({"error": f"stt failed: {exc}"}, status_code=502)
+    return JSONResponse({"transcript": transcript})
+
+
+@app.post("/api/tts")
+async def tts(body: TTSBody) -> Response:
+    """Speak the agent's reply with Cartesia (the same neural voice the terminal uses)."""
+    import asyncio
+
+    if not os.environ.get("CARTESIA_API_KEY"):
+        return JSONResponse(
+            {"error": "text-to-speech unavailable (no CARTESIA_API_KEY)"}, status_code=503
+        )
+    voice = body.voice_id or os.environ.get("CARTESIA_VOICE_ID", CARTESIA_VOICE)
+    try:
+        audio = await asyncio.to_thread(_cartesia_tts, body.text, voice)
+    except Exception as exc:  # noqa: BLE001 - clean message, never a stack
+        return JSONResponse({"error": f"tts failed: {exc}"}, status_code=502)
+    return Response(content=audio, media_type="audio/wav")
 
 
 @app.get("/api/research")

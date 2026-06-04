@@ -5,9 +5,12 @@ The dialogue logic itself is tested in test_dialogue.py; here we test the adapte
 
 from __future__ import annotations
 
+import os
+
+import pytest
 from fastapi.testclient import TestClient
 
-from callbudget.web.app import app
+from callbudget.web.app import _load_dotenv, app
 
 
 def test_converse_endpoint_shape():
@@ -15,6 +18,20 @@ def test_converse_endpoint_shape():
     with TestClient(app) as client:
         turn = client.post("/api/converse", json={"history": []}).json()
         assert turn.get("reply") and "record" in turn and "done" in turn
+
+
+def test_voice_roundtrip_when_keyed():
+    """Keyed: /api/tts (Cartesia) makes audio that /api/stt (Deepgram) reads back.
+    This is the browser's audio path, using the same providers as the terminal."""
+    _load_dotenv()
+    if not (os.environ.get("CARTESIA_API_KEY") and os.environ.get("DEEPGRAM_API_KEY")):
+        pytest.skip("needs CARTESIA_API_KEY + DEEPGRAM_API_KEY (live voice)")
+    with TestClient(app) as client:
+        t = client.post("/api/tts", json={"text": "yes we have the twenty milligram in stock"})
+        assert t.status_code == 200 and t.headers["content-type"] == "audio/wav"
+        assert len(t.content) > 1000
+        s = client.post("/api/stt", content=t.content, headers={"Content-Type": "audio/wav"}).json()
+        assert "twenty milligram" in s["transcript"].lower()
 
 
 def test_web_api():

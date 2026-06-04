@@ -95,8 +95,11 @@ uv sync --extra web
 uv run callbudget serve          # http://127.0.0.1:8000
 ```
 
-It shows the ranked pharmacies, the call plan, a "call the top pharmacy" button
-(transcript + extracted record, or an abstention), the live metrics, and the chart.
+It shows the ranked pharmacies, the call plan, a two-way voice conversation (push to
+talk: your mic is transcribed by Deepgram, the agent replies in Cartesia's voice,
+with a typed fallback), the safety metrics, the chart, and the auto-research
+leaderboard. The voice needs Deepgram + Cartesia keys in `.env`; without them the
+conversation still works by typing.
 
 ## MCP server
 
@@ -162,11 +165,16 @@ mechanism** on realistic inputs, never a real stock-rate gain.
 
 ## The voice layer
 
-- **Offline (tested):** `voice/loop.py::simulate_text_call` runs the full
-  call -> extract -> record path with no keys or audio.
-- **Live (run locally):** `voice/live_call.py` is the real Pipecat pipeline
-  (Deepgram STT -> Claude -> Cartesia TTS). Needs `uv sync --extra voice` + API
-  keys + a mic; not exercised in CI.
+One dialogue brain (`voice/dialogue.py`) drives every surface; only the transport differs.
+
+- **The brain (tested):** `voice/dialogue.respond` turns the call-so-far into the
+  agent's next line plus the structured record, text in and text out. Deterministic
+  offline path (no key) in CI; live Claude path when keyed.
+- **Browser (turn-based):** the showcase records a turn to `/api/stt` (Deepgram) and
+  plays the reply from `/api/tts` (Cartesia). No build step; needs the keys in `.env`.
+- **Terminal / production (streaming):** `voice/live_call.py` is the real Pipecat
+  pipeline (Deepgram -> the brain -> Cartesia). Needs `uv sync --extra voice` + keys +
+  a mic; not exercised in CI. Telephony is the same pipeline with a Twilio/SIP transport.
 
 ## Learn more
 

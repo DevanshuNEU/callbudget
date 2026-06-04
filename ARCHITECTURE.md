@@ -198,66 +198,55 @@ per-region models), the freshness treadmill (the real bottleneck), and correlate
 regional outages that break the greedy policy's independence assumption (the
 deferred bandit / correlation-aware variant, see `policy/budget.py`).
 
-## 9. Target: one voice pipeline, transport adapters (the unification)
+## 9. Unified voice: one brain, shared providers, per-surface transport
 
 The engine is already ports-and-adapters: one core (`mcp/engine.py`) behind three
 thin adapters (CLI, MCP server, web). The voice layer is the one place that has not
 yet earned that discipline, and this section is the target it migrates to.
 
-Status: Stage 1 is done. The dialogue brain now lives in one module
-(`voice/dialogue.py`, `respond(history, drug, dose, caller) -> Turn`) and every
-surface drives it: the CLI (`callbudget converse`), the web (`/api/converse`), the
-MCP server (the `converse` tool), and the terminal voice loop (`live_call.py`). The
-per-utterance terminal logic and the inlined web dialogue were removed, and the
-vestigial `/api/extract` endpoint was deleted. One behavior everywhere, text in and
-text out, unit-tested with no audio.
-
-What remains (Stage 2) is the single provider divergence: the browser still uses the
-Web Speech API for audio I/O instead of streaming to the Pipecat Deepgram/Cartesia
-pipeline. That is the next step below.
+Status: done. The dialogue brain lives in one module (`voice/dialogue.py`,
+`respond(history, drug, dose, caller) -> Turn`) and every surface drives it: the CLI
+(`callbudget converse`), the web (`/api/converse`), the MCP server (the `converse`
+tool), and the terminal voice loop (`live_call.py`). The browser now uses the SAME
+providers as the terminal: it records a turn and posts it to `/api/stt` (Deepgram),
+then plays the reply from `/api/tts` (Cartesia). Web Speech, the `/api/extract`
+endpoint, and the per-utterance terminal loop are gone.
 
 ```mermaid
 flowchart TD
-    local["local.audio transport - CLI / dev mic"] --> pipe
-    ws["websocket.fastapi / smallwebrtc transport - browser"] --> pipe
-    tel["telephony transport (Twilio / SIP) - production"] --> pipe
-    pipe["ONE voice pipeline (Pipecat): Deepgram STT -> Claude -> Cartesia TTS"] --> brain
-    brain["ONE dialogue brain: history -> next reply + structured record + done"] --> engine
+    cli["CLI: callbudget converse"] --> brain
+    web["browser: /api/stt (Deepgram) + /api/tts (Cartesia), turn-based"] --> brain
+    mcpt["MCP: converse tool"] --> brain
+    term["terminal / telephony: Pipecat streaming (Deepgram + Cartesia)"] --> brain
+    brain["ONE dialogue brain (Claude): history -> reply + record + done"] --> engine
     engine["engine: predict / plan / eval + observation log"]
 ```
 
 Principles (the same ones the engine already follows):
 
 - **One dialogue brain.** The conversation logic (open with the AI disclosure +
-  recording consent, ask a clarifying question when unsure, confirm, close, and emit
-  the structured `ExtractionRecord`) lives in a single module, text in and text out,
-  so it is deterministically testable and identical on every surface.
-- **One provider stack.** Deepgram (STT), Claude (dialogue + extraction), Cartesia
-  (TTS), orchestrated by Pipecat, everywhere. No browser Web Speech.
-- **Transport is the only thing that varies.** `local.audio` for the CLI/dev,
-  `websocket.fastapi` (or `smallwebrtc`) for the browser, a telephony transport for
-  production. The browser connects to the same backend pipeline; it does not run its
-  own stack. Different transports are correct (a phone, a browser, and a terminal
-  cannot share one), so quality is identical across surfaces and only the wire differs.
+  recording consent, ask a clarifying question when unsure, confirm, close, emit the
+  structured record) lives in a single module, text in and text out, identical on
+  every surface and unit-tested with no audio.
+- **Shared providers.** Deepgram (STT), Claude (the brain), Cartesia (TTS)
+  everywhere. No browser Web Speech.
+- **Orchestration is the per-surface adapter.** A real-time phone call wants a
+  streaming pipeline (Pipecat: VAD, barge-in, low latency), so the terminal and the
+  production telephony path use Pipecat. A browser demo is turn-based, so it reaches
+  the same providers through request/response endpoints (`/api/stt`, `/api/tts`,
+  `/api/converse`), with vanilla MediaRecorder and fetch and no build step. Different
+  surfaces legitimately need different transports; what they share is the providers
+  and the brain. That is the ports-and-adapters split, not scatter.
 - **Same engine underneath.** The dialogue brain calls predict / plan / eval and
   appends to the observation log, exactly as the CLI / MCP / web adapters do.
 
-What the target removes (today's cruft):
+Removed in the unification: the browser Web Speech path, the `/api/extract` one-shot
+endpoint, and the per-utterance loop in `voice/live_call.py`.
 
-- the browser Web Speech path (replaced by the websocket transport into the pipeline),
-- the `/api/extract` one-shot endpoint (the dialogue brain subsumes it),
-- the second extractor (`make_instructor_extractor` vs `make_claude_extractor`: keep one),
-- the per-utterance loop in `voice/live_call.py` (replaced by the shared brain).
+Deferred (documented, not built): production telephony (section 7) wraps the same
+Pipecat pipeline + brain with a Twilio / SIP transport. `make_instructor_extractor`
+stays as an optional schema-validated alternative to `make_claude_extractor`.
 
-Migration order, so each step is independently testable:
-
-1. DONE. Promoted the dialogue logic to one module (`voice/dialogue.py`); pointed the
-   CLI, the web, the MCP server, and the terminal at it; deleted the duplicate
-   behavior and the vestigial `/api/extract` endpoint. Unit-tested, no audio.
-2. Put the browser on the Pipecat pipeline via `websocket.fastapi` (Deepgram +
-   Cartesia), delete Web Speech. Needs local audio verification.
-3. Telephony transport stays documented (section 7), not built.
-
-End state, one sentence: one dialogue brain and one Deepgram / Claude / Cartesia
-pipeline, reached through local-audio, browser-websocket, and telephony transport
-adapters, all over the one prediction engine.
+End state: one dialogue brain and one set of providers (Deepgram / Claude /
+Cartesia), reached through a streaming Pipecat transport for real-time calls and
+request/response endpoints for the browser, all over the one prediction engine.
