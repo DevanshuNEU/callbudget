@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.uv/
+*.egg-info/
+dist/
+build/
+
+# Env / secrets
+.env
+.env.*
+*.key
+
+# Bulk source data (free, but large - fetch via loaders; do not commit)
+data/nppes/
+data/rxnorm/
+data/arcos/
+data/fda_ashp/
+data/nadac/
+data/observations/
+*.parquet
+*.duckdb
+
+# Trial / eval logs
+runs/
+*.jsonl
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Audio scratch
+*.wav
+*.mp3
+audio_scratch/

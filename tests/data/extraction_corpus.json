@@ -1,0 +1,11 @@
+[
+  {"transcript": "yeah we have the 20s in stock", "in_stock": "yes", "abstain": false},
+  {"transcript": "yep we've got the adderall xr 20s on the shelf", "in_stock": "yes", "abstain": false},
+  {"transcript": "yeah those are in stock come on by", "in_stock": "yes", "abstain": false},
+  {"transcript": "we're out of the xr been out two weeks", "in_stock": "no", "abstain": false},
+  {"transcript": "no we don't have the 20 xr", "in_stock": "no", "abstain": false},
+  {"transcript": "we don't have any of those right now", "in_stock": "no", "abstain": false},
+  {"transcript": "the generic 10s are in but the brand 20 xr is on backorder", "in_stock": "partial", "abstain": false},
+  {"transcript": "uh let me check the back i'm not sure", "in_stock": "unknown", "abstain": true},
+  {"transcript": "hmm i think so you might wanna call back", "in_stock": "unknown", "abstain": true}
+]
