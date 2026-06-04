@@ -36,6 +36,10 @@ def test_offline_extractor_matches_corpus(case: dict) -> None:
 def test_live_extractor_with_context_does_not_overabstain() -> None:
     """Keyed live test: with the question context, natural answers that would
     abstain out of context should read as clear yes/no. Skipped without a key."""
+    if not os.environ.get("CALLBUDGET_LIVE_TESTS"):
+        pytest.skip("set CALLBUDGET_LIVE_TESTS=1 to run live API tests")
+    pytest.importorskip("anthropic")  # the SDK extractor needs the [voice]/[agent] extra
+
     from callbudget.voice.live_call import _load_dotenv
 
     _load_dotenv()  # prefer the valid .env key over a stale one in the shell

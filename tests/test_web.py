@@ -23,6 +23,8 @@ def test_converse_endpoint_shape():
 def test_voice_roundtrip_when_keyed():
     """Keyed: /api/tts (Cartesia) makes audio that /api/stt (Deepgram) reads back.
     This is the browser's audio path, using the same providers as the terminal."""
+    if not os.environ.get("CALLBUDGET_LIVE_TESTS"):
+        pytest.skip("set CALLBUDGET_LIVE_TESTS=1 to run live API tests")
     _load_dotenv()
     if not (os.environ.get("CARTESIA_API_KEY") and os.environ.get("DEEPGRAM_API_KEY")):
         pytest.skip("needs CARTESIA_API_KEY + DEEPGRAM_API_KEY (live voice)")

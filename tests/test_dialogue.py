@@ -43,6 +43,8 @@ def test_record_and_verdict_shapes(monkeypatch):
 
 def test_live_dialogue_when_keyed():
     """Keyed: the live brain opens with the disclosure and confirms a clear answer."""
+    if not os.environ.get("CALLBUDGET_LIVE_TESTS"):
+        pytest.skip("set CALLBUDGET_LIVE_TESTS=1 to run live API tests")
     from callbudget.voice.live_call import _load_dotenv
 
     _load_dotenv()  # prefer the valid .env key over a stale one in the shell
