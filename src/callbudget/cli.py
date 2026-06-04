@@ -68,8 +68,10 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "converse":
         import sys
 
+        from .config import load_dotenv
         from .voice.dialogue import respond
 
+        load_dotenv()  # so the live brain sees the .env keys (not a stale shell key)
         history: list[dict] = []
         turn = respond(history)  # the agent's opener (AI disclosure + recording consent)
         print(f"agent: {turn.reply}")

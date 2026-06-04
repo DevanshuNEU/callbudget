@@ -26,6 +26,8 @@ from __future__ import annotations
 
 from datetime import UTC
 
+from ..config import load_dotenv
+
 
 async def run_live_call(
     drug: str = "Adderall XR", dose: str = "20 mg", caller: str = "Devanshu"
@@ -158,29 +160,8 @@ def _env(name: str) -> str:
     return value
 
 
-def _load_dotenv() -> None:
-    """Populate os.environ from the repo .env so the local run just works.
-
-    .env is this app's source of truth and OVERRIDES the shell: a stale
-    ANTHROPIC_API_KEY exported in the shell would otherwise shadow the good key
-    you put in .env (which is exactly what bit the first run)."""
-    import os
-
-    from ..config import REPO_ROOT
-
-    env = REPO_ROOT / ".env"
-    if not env.exists():
-        return
-    for line in env.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        os.environ[key.strip()] = value.strip().strip('"').strip("'")
-
-
 if __name__ == "__main__":
     import asyncio
 
-    _load_dotenv()
+    load_dotenv()
     asyncio.run(run_live_call())

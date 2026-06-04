@@ -17,7 +17,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 
-from ..config import REPO_ROOT, RUNS_DIR
+from ..config import REPO_ROOT, RUNS_DIR, load_dotenv
 from ..mcp.engine import CallBudgetEngine
 
 STATIC = Path(__file__).parent / "static"
@@ -27,28 +27,10 @@ RESEARCH_JOURNAL = RUNS_DIR / "research_journal.jsonl"
 CARTESIA_VOICE = "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4"
 
 
-def _load_dotenv() -> None:
-    """Populate os.environ from the repo .env so /api/converse can use the live brain.
-
-    Mirrors voice/live_call._load_dotenv: .env is this app's source of truth and
-    OVERRIDES the shell, so a stale ANTHROPIC_API_KEY exported in the shell cannot
-    shadow the good key in .env. Best-effort: silently skip if there is no .env.
-    """
-    env = REPO_ROOT / ".env"
-    if not env.exists():
-        return
-    for line in env.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        os.environ[key.strip()] = value.strip().strip('"').strip("'")
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Load .env BEFORE building the engine so the live dialogue sees the key.
-    _load_dotenv()
+    # Load .env BEFORE building the engine so the live dialogue + voice see the keys.
+    load_dotenv()
     app.state.engine = CallBudgetEngine()
     yield
 

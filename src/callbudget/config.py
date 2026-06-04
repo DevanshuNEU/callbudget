@@ -60,3 +60,24 @@ class Settings(BaseModel):
 
 
 DEFAULT = Settings()
+
+
+def load_dotenv() -> None:
+    """Populate os.environ from the repo .env, OVERRIDING the shell.
+
+    .env is the app's source of truth for API keys; a stale key exported in the shell
+    would otherwise shadow the good one in .env. Best-effort: no .env, no-op. Every
+    entrypoint (web app, CLI, live voice loop) calls this so they all read the same
+    keys the same way.
+    """
+    import os
+
+    env = REPO_ROOT / ".env"
+    if not env.exists():
+        return
+    for line in env.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ[key.strip()] = value.strip().strip('"').strip("'")

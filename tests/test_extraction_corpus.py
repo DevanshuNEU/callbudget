@@ -40,9 +40,9 @@ def test_live_extractor_with_context_does_not_overabstain() -> None:
         pytest.skip("set CALLBUDGET_LIVE_TESTS=1 to run live API tests")
     pytest.importorskip("anthropic")  # the SDK extractor needs the [voice]/[agent] extra
 
-    from callbudget.voice.live_call import _load_dotenv
+    from callbudget.config import load_dotenv
 
-    _load_dotenv()  # prefer the valid .env key over a stale one in the shell
+    load_dotenv()  # prefer the valid .env key over a stale one in the shell
     if not os.environ.get("ANTHROPIC_API_KEY"):
         pytest.skip("needs ANTHROPIC_API_KEY (live extractor)")
 
