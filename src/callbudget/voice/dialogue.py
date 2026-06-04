@@ -111,12 +111,12 @@ def _respond_offline(msgs: list[Message], drug: str, dose: str, caller: str) -> 
 
 
 def _respond_live(msgs: list[Message], drug: str, dose: str, caller: str) -> Turn:
-    """Claude-driven dialogue. Plain Anthropic (works with just the [voice] extra),
-    robust JSON extraction, null coercion, and emdash stripping on the spoken reply."""
+    """Claude-driven dialogue over the Anthropic Messages REST API via urllib (no SDK,
+    so the web / CLI / MCP surfaces need only a key, not the [voice] or [agent] extra).
+    Robust JSON extraction, null coercion, and emdash stripping on the spoken reply."""
     import json
     import re
-
-    from anthropic import Anthropic
+    import urllib.request
 
     convo = "\n".join(f"{m.role}: {m.text}" for m in msgs) or "(call just connected)"
     prompt = (
@@ -132,11 +132,22 @@ def _respond_live(msgs: list[Message], drug: str, dose: str, caller: str) -> Tur
         f"sentence and set done=true with in_stock.\n\nConversation so far:\n{convo}\n\n"
         "Your next turn as JSON:"
     )
-    msg = Anthropic().messages.create(
-        model="claude-sonnet-4-6", max_tokens=400, temperature=0.3,
-        messages=[{"role": "user", "content": prompt}],
+    body = json.dumps(
+        {
+            "model": "claude-sonnet-4-6", "max_tokens": 400, "temperature": 0.3,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+    ).encode()
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages", data=body,
+        headers={
+            "x-api-key": os.environ["ANTHROPIC_API_KEY"],
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
     )
-    text = msg.content[0].text
+    resp = json.load(urllib.request.urlopen(req, timeout=30))
+    text = resp["content"][0]["text"]
     start, end = text.find("{"), text.rfind("}")
     data = json.loads(text[start : end + 1]) if start != -1 and end != -1 else {}
 
