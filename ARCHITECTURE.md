@@ -197,3 +197,62 @@ Known limits at scale: low-data regions (handled by pooling and features, not
 per-region models), the freshness treadmill (the real bottleneck), and correlated
 regional outages that break the greedy policy's independence assumption (the
 deferred bandit / correlation-aware variant, see `policy/budget.py`).
+
+## 9. Target: one voice pipeline, transport adapters (the unification)
+
+The engine is already ports-and-adapters: one core (`mcp/engine.py`) behind three
+thin adapters (CLI, MCP server, web). The voice layer is the one place that has not
+yet earned that discipline, and this section is the target it migrates to.
+
+Honest current state: voice diverges two ways. The terminal call
+(`voice/live_call.py`) runs Deepgram + Cartesia + Pipecat with a per-utterance
+extraction step; the browser (`web/static/index.html`) uses the browser's Web Speech
+API with a separate multi-turn dialogue endpoint (`/api/converse`). Two provider
+stacks and two dialogue behaviors for one job. That is a seam from building the
+browser demo fast, not a design, and it is what the target below removes.
+
+```mermaid
+flowchart TD
+    local["local.audio transport - CLI / dev mic"] --> pipe
+    ws["websocket.fastapi / smallwebrtc transport - browser"] --> pipe
+    tel["telephony transport (Twilio / SIP) - production"] --> pipe
+    pipe["ONE voice pipeline (Pipecat): Deepgram STT -> Claude -> Cartesia TTS"] --> brain
+    brain["ONE dialogue brain: history -> next reply + structured record + done"] --> engine
+    engine["engine: predict / plan / eval + observation log"]
+```
+
+Principles (the same ones the engine already follows):
+
+- **One dialogue brain.** The conversation logic (open with the AI disclosure +
+  recording consent, ask a clarifying question when unsure, confirm, close, and emit
+  the structured `ExtractionRecord`) lives in a single module, text in and text out,
+  so it is deterministically testable and identical on every surface.
+- **One provider stack.** Deepgram (STT), Claude (dialogue + extraction), Cartesia
+  (TTS), orchestrated by Pipecat, everywhere. No browser Web Speech.
+- **Transport is the only thing that varies.** `local.audio` for the CLI/dev,
+  `websocket.fastapi` (or `smallwebrtc`) for the browser, a telephony transport for
+  production. The browser connects to the same backend pipeline; it does not run its
+  own stack. Different transports are correct (a phone, a browser, and a terminal
+  cannot share one), so quality is identical across surfaces and only the wire differs.
+- **Same engine underneath.** The dialogue brain calls predict / plan / eval and
+  appends to the observation log, exactly as the CLI / MCP / web adapters do.
+
+What the target removes (today's cruft):
+
+- the browser Web Speech path (replaced by the websocket transport into the pipeline),
+- the `/api/extract` one-shot endpoint (the dialogue brain subsumes it),
+- the second extractor (`make_instructor_extractor` vs `make_claude_extractor`: keep one),
+- the per-utterance loop in `voice/live_call.py` (replaced by the shared brain).
+
+Migration order, so each step is independently testable:
+
+1. Promote the dialogue logic to one module (text in / out); point the CLI, the web,
+   and the terminal at it; delete the duplicate behavior and the vestigial endpoint.
+   Fully unit-testable, no audio.
+2. Put the browser on the Pipecat pipeline via `websocket.fastapi` (Deepgram +
+   Cartesia), delete Web Speech. Needs local audio verification.
+3. Telephony transport stays documented (section 7), not built.
+
+End state, one sentence: one dialogue brain and one Deepgram / Claude / Cartesia
+pipeline, reached through local-audio, browser-websocket, and telephony transport
+adapters, all over the one prediction engine.
