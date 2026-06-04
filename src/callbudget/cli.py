@@ -6,6 +6,7 @@
     callbudget demo       end-to-end walkthrough
     callbudget chart      render figures/ecf_flywheel.png
     callbudget research   constrained auto-search over model + extraction configs
+    callbudget converse   hold a text conversation with the call agent
 
 Uses argparse (stdlib) to avoid adding a dependency for a handful of commands.
 """
@@ -28,6 +29,7 @@ def main(argv: list[str] | None = None) -> None:
         ("demo", "end-to-end walkthrough"),
         ("chart", "render figures/ecf_flywheel.png"),
         ("serve", "run the web UI (needs: uv sync --extra web)"),
+        ("converse", "hold a text conversation with the call agent"),
     ]:
         sub.add_parser(name, help=help_text)
 
@@ -63,6 +65,27 @@ def main(argv: list[str] | None = None) -> None:
 
         print("CallBudget UI on http://127.0.0.1:8000")
         uvicorn.run("callbudget.web.app:app", host="127.0.0.1", port=8000)
+    elif args.cmd == "converse":
+        import sys
+
+        from .voice.dialogue import respond
+
+        history: list[dict] = []
+        turn = respond(history)  # the agent's opener (AI disclosure + recording consent)
+        print(f"agent: {turn.reply}")
+        history.append({"role": "agent", "text": turn.reply})
+        print("(type the pharmacist's replies; empty line or Ctrl-D to hang up)")
+        for line in sys.stdin:
+            text = line.strip()
+            if not text:
+                break
+            history.append({"role": "pharmacist", "text": text})
+            turn = respond(history)
+            print(f"agent: {turn.reply}")
+            history.append({"role": "agent", "text": turn.reply})
+            if turn.done:
+                print(f"[{turn.verdict}]")
+                break
     else:
         from .mcp.engine import CallBudgetEngine
 

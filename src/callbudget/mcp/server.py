@@ -39,6 +39,27 @@ def build_server():
         """ECF (naive vs learned) plus safety metrics (false-positive-in-stock, abstention)."""
         return engine.run_eval()
 
+    @mcp.tool
+    def converse(
+        history: list[dict] | None = None,
+        drug: str = "Adderall XR",
+        dose: str = "20 mg",
+        caller: str = "Devanshu",
+    ) -> dict:
+        """One turn of a pharmacy stock call. Given the conversation so far (a list of
+        {role: agent|pharmacist, text}), return the agent's next line, the structured
+        stock record, and whether the call is done. Same dialogue brain as the web and
+        CLI; call repeatedly with growing history to hold a conversation."""
+        from ..voice.dialogue import respond
+
+        turn = respond(history or [], drug, dose, caller)
+        return {
+            "reply": turn.reply,
+            "done": turn.done,
+            "source": turn.source,
+            "record": {"drug": drug, "dose": dose, **turn.record},
+        }
+
     return mcp
 
 

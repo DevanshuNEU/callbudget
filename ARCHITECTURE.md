@@ -204,12 +204,17 @@ The engine is already ports-and-adapters: one core (`mcp/engine.py`) behind thre
 thin adapters (CLI, MCP server, web). The voice layer is the one place that has not
 yet earned that discipline, and this section is the target it migrates to.
 
-Honest current state: voice diverges two ways. The terminal call
-(`voice/live_call.py`) runs Deepgram + Cartesia + Pipecat with a per-utterance
-extraction step; the browser (`web/static/index.html`) uses the browser's Web Speech
-API with a separate multi-turn dialogue endpoint (`/api/converse`). Two provider
-stacks and two dialogue behaviors for one job. That is a seam from building the
-browser demo fast, not a design, and it is what the target below removes.
+Status: Stage 1 is done. The dialogue brain now lives in one module
+(`voice/dialogue.py`, `respond(history, drug, dose, caller) -> Turn`) and every
+surface drives it: the CLI (`callbudget converse`), the web (`/api/converse`), the
+MCP server (the `converse` tool), and the terminal voice loop (`live_call.py`). The
+per-utterance terminal logic and the inlined web dialogue were removed, and the
+vestigial `/api/extract` endpoint was deleted. One behavior everywhere, text in and
+text out, unit-tested with no audio.
+
+What remains (Stage 2) is the single provider divergence: the browser still uses the
+Web Speech API for audio I/O instead of streaming to the Pipecat Deepgram/Cartesia
+pipeline. That is the next step below.
 
 ```mermaid
 flowchart TD
@@ -246,9 +251,9 @@ What the target removes (today's cruft):
 
 Migration order, so each step is independently testable:
 
-1. Promote the dialogue logic to one module (text in / out); point the CLI, the web,
-   and the terminal at it; delete the duplicate behavior and the vestigial endpoint.
-   Fully unit-testable, no audio.
+1. DONE. Promoted the dialogue logic to one module (`voice/dialogue.py`); pointed the
+   CLI, the web, the MCP server, and the terminal at it; deleted the duplicate
+   behavior and the vestigial `/api/extract` endpoint. Unit-tested, no audio.
 2. Put the browser on the Pipecat pipeline via `websocket.fastapi` (Deepgram +
    Cartesia), delete Web Speech. Needs local audio verification.
 3. Telephony transport stays documented (section 7), not built.

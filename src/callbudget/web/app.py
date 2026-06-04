@@ -1,8 +1,9 @@
 """FastAPI web app over the CallBudget engine: a polished showcase + JSON API.
 
-Another adapter over the engine, exactly like mcp/server.py: the transport differs
-(HTTP + a browser), the logic does not. No build step; it serves one static page.
-The engine is built once at startup and shared (single-user demo).
+A transport adapter, exactly like mcp/server.py and the CLI: the HTTP + browser
+surface differs, the logic does not. Prediction comes from the engine; the voice
+conversation comes from the one dialogue brain (voice/dialogue.py). No build step;
+serves one static page. The engine is built once at startup and shared.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ RESEARCH_JOURNAL = RUNS_DIR / "research_journal.jsonl"
 
 
 def _load_dotenv() -> None:
-    """Populate os.environ from the repo .env so /api/extract can use the live path.
+    """Populate os.environ from the repo .env so /api/converse can use the live brain.
 
     Mirrors voice/live_call._load_dotenv: .env is this app's source of truth and
     OVERRIDES the shell, so a stale ANTHROPIC_API_KEY exported in the shell cannot
@@ -44,19 +45,13 @@ def _load_dotenv() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Load .env BEFORE building the engine so the live extractor sees the key.
+    # Load .env BEFORE building the engine so the live dialogue sees the key.
     _load_dotenv()
     app.state.engine = CallBudgetEngine()
     yield
 
 
 app = FastAPI(title="CallBudget", lifespan=lifespan)
-
-
-class ExtractBody(BaseModel):
-    """Request body for /api/extract: the (noisy) spoken pharmacist answer."""
-
-    transcript: str = ""
 
 
 class ConverseTurn(BaseModel):
@@ -102,159 +97,31 @@ def call(npi: str, style: str = "clear") -> dict:
     }
 
 
-@app.post("/api/extract")
-def extract_transcript(body: ExtractBody) -> JSONResponse:
-    """Run the live self-consistency extractor on a spoken/typed pharmacist answer.
-
-    Uses the LIVE Claude extractor when ANTHROPIC_API_KEY is set (n_samples=3 so
-    self-consistency is meaningful), and falls back to the deterministic offline
-    keyword extractor otherwise (n_samples=1, always works, no key). The live call
-    is wrapped so a transient API error returns a clean JSON error, never a 500.
-    """
-    # Imported here (not at module load) so the offline path never touches the
-    # vendor SDK and the page boots even without the [agent] extra installed.
-    from ..voice.extract import extract, keyword_extract, make_claude_extractor
-
-    transcript = (body.transcript or "").strip()
-    if not transcript:
-        return JSONResponse({"error": "empty transcript"}, status_code=400)
-
-    use_live = bool(os.environ.get("ANTHROPIC_API_KEY"))
-    if use_live:
-        try:
-            # Pass the asked drug/dose so the extractor grounds against the question
-            # (a natural "we have the 20s" reads as yes, not an abstain).
-            record = extract(
-                transcript,
-                extractor=make_claude_extractor(drug="Adderall XR", dose="20 mg"),
-                n_samples=3,
-            )
-            extractor_name = "claude"
-        except Exception as exc:  # noqa: BLE001 - surface a clean message, not a stack
-            return JSONResponse(
-                {"error": f"live extractor failed: {exc}", "extractor": "claude"},
-                status_code=502,
-            )
-    else:
-        record = extract(transcript, extractor=keyword_extract, n_samples=1)
-        extractor_name = "keyword"
-
-    if record.abstain:
-        verdict = "re-call (not confident, no label stored)"
-    else:
-        verdict = f"learn (store a labeled observation: in_stock={record.in_stock.value})"
-
-    return JSONResponse(
-        {
-            "record": record.model_dump(mode="json"),
-            "extractor": extractor_name,
-            "verdict": verdict,
-        }
-    )
-
-
 @app.post("/api/converse")
 def converse(body: ConverseBody) -> JSONResponse:
-    """One turn of a two-way pharmacy call.
-
-    The agent is the caller trying to learn whether the drug is in stock. Given the
-    conversation so far it returns the next thing to say, the stock record built up
-    so far, and whether the call is done. When the pharmacist's answer is ambiguous
-    it asks a clarifying question instead of abstaining: in a conversation,
-    uncertainty becomes a follow-up, not a dead end. Live Claude when
-    ANTHROPIC_API_KEY is set, else a deterministic offline dialogue (no key).
+    """One turn of a two-way pharmacy call, delegated to the one dialogue brain
+    (voice/dialogue.respond): open with the AI + recording disclosure, ask a
+    clarifying question when unsure instead of abstaining, confirm when sure. Live
+    Claude when ANTHROPIC_API_KEY is set, else the deterministic offline dialogue.
+    This endpoint is a thin transport adapter; the logic lives in dialogue.py.
     """
-    history = [{"role": t.role, "text": t.text} for t in body.history]
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        try:
-            return JSONResponse(_converse_live(body.drug, body.dose, history, body.caller))
-        except Exception as exc:  # noqa: BLE001 - clean message, never a stack
-            return JSONResponse({"error": f"live converse failed: {exc}"}, status_code=502)
-    return JSONResponse(_converse_offline(body.drug, body.dose, history, body.caller))
+    from ..voice.dialogue import respond
 
-
-def _empty_record(drug: str, dose: str) -> dict:
-    return {
-        "drug": drug, "dose": dose, "in_stock": "unknown", "confidence": 0.0,
-        "abstain": True, "brand_vs_generic": "unknown", "evidence_span": "",
-    }
-
-
-def _converse_offline(drug: str, dose: str, history: list[dict], caller: str = "Devanshu") -> dict:
-    """Deterministic dialogue (no key): open, ask one clarifying question on an
-    ambiguous answer, then confirm or give up. Used in CI and without a key."""
-    from ..voice.extract import extract, keyword_extract
-
-    said = [t for t in history if t["role"] == "pharmacist"]
-    if not said:
-        # Disclose up front that this is an AI agent, and that the call may be
-        # recorded (bot-disclosure + recording-consent norms).
-        return {"reply": (f"Hi, I'm an AI assistant calling on behalf of {caller}, and this "
-                          f"call may be recorded. Do you have {drug} {dose} in stock?"),
-                "record": _empty_record(drug, dose), "done": False,
-                "confidence": 0.0, "extractor": "keyword"}
-    rec = extract(said[-1]["text"], extractor=keyword_extract, n_samples=1)
-    record = rec.model_dump(mode="json")
-    if not rec.abstain:
-        return {"reply": f"Got it, so that's {rec.in_stock.value}. Thank you.",
-                "record": record, "done": True, "confidence": rec.confidence,
-                "extractor": "keyword"}
-    if len(said) < 2:  # one clarifying question, then stop to avoid looping
-        return {"reply": f"Just to confirm, do you have the {drug} {dose} in stock right now?",
-                "record": record, "done": False, "confidence": rec.confidence,
-                "extractor": "keyword"}
-    return {"reply": "No problem, I'll call back to confirm. Thanks.",
-            "record": record, "done": True, "confidence": rec.confidence,
-            "extractor": "keyword"}
-
-
-def _converse_live(drug: str, dose: str, history: list[dict], caller: str = "Devanshu") -> dict:
-    """LLM-driven dialogue: the agent asks, follows up when unsure, confirms, closes.
-
-    Plain Anthropic (no instructor) so it works with just the [voice] extra, with the
-    same robust JSON extraction + null coercion as the live answer extractor."""
-    import json
-    import re
-
-    from anthropic import Anthropic
-
-    from ..schemas import StockState
-
-    convo = "\n".join(f"{t['role']}: {t['text']}" for t in history) or "(call just connected)"
-    prompt = (
-        f"You are an AI assistant calling a pharmacy on behalf of {caller} to find out whether "
-        f"{drug} {dose} is in stock for a patient. Talk like a real person on a quick phone "
-        "call: warm, brief, usually one short sentence, no filler, no emdashes. Reply with "
-        "STRICT JSON only, "
-        "keys: reply (string), in_stock (yes|no|partial|unknown), confidence (0..1), done "
-        "(bool), evidence_span (verbatim quote or empty). When the call just connected (no "
-        f"prior turns), your reply MUST first say you are an AI assistant for {caller} and that "
-        "the call may be recorded, then ask if they have it (bot-disclosure and recording "
-        "consent are required). If their answer is ambiguous or incomplete, ask ONE short "
-        "clarifying question and set done=false. When confident, confirm in one sentence and "
-        f"set done=true with in_stock.\n\nConversation so far:\n{convo}\n\nYour next turn as JSON:"
+    history = [m.model_dump() for m in body.history]
+    try:
+        turn = respond(history, body.drug, body.dose, body.caller)
+    except Exception as exc:  # noqa: BLE001 - clean message, never a stack
+        return JSONResponse({"error": f"dialogue failed: {exc}"}, status_code=502)
+    return JSONResponse(
+        {
+            "reply": turn.reply,
+            "done": turn.done,
+            "extractor": turn.source,
+            "confidence": turn.confidence,
+            "verdict": turn.verdict,
+            "record": {"drug": body.drug, "dose": body.dose, **turn.record},
+        }
     )
-    msg = Anthropic().messages.create(
-        model="claude-sonnet-4-6", max_tokens=400, temperature=0.3,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    text = msg.content[0].text
-    start, end = text.find("{"), text.rfind("}")
-    data = json.loads(text[start : end + 1]) if start != -1 and end != -1 else {}
-
-    in_stock = data.get("in_stock") or "unknown"
-    if in_stock not in (s.value for s in StockState):
-        in_stock = "unknown"
-    confidence = round(float(data.get("confidence") or 0.0), 3)
-    reply = data.get("reply") or f"Sorry, do you have {drug} {dose} in stock?"
-    reply = re.sub(r"\s*[—–]\s*", ", ", reply)  # strip em/en dashes (models love them)
-    record = {
-        "drug": drug, "dose": dose, "in_stock": in_stock, "confidence": confidence,
-        "abstain": in_stock == "unknown", "brand_vs_generic": "unknown",
-        "evidence_span": data.get("evidence_span") or "",
-    }
-    return {"reply": reply, "record": record, "done": bool(data.get("done")),
-            "confidence": confidence, "extractor": "claude"}
 
 
 @app.get("/api/research")
@@ -297,10 +164,8 @@ def research() -> dict:
     if not trials:
         return {"available": False}
 
-    # The safety bar is the smallest false-positive among REJECTED configs minus a
-    # hair, but the journal does not store the bar directly. Derive a usable display
-    # bar as the max false-positive among feasible configs (everything at or below it
-    # passed), which matches the report's "<= bar" semantics for the leaderboard.
+    # Display bar: the max false-positive among feasible configs (everything at or
+    # below it passed), matching the report's "<= bar" leaderboard semantics.
     feasible_fp = [
         t["false_positive_in_stock"]
         for t in trials
