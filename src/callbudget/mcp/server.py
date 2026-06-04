@@ -64,4 +64,7 @@ def build_server():
 
 
 if __name__ == "__main__":
+    from ..config import load_dotenv
+
+    load_dotenv()  # so the converse tool's live brain sees the .env keys
     build_server().run()
