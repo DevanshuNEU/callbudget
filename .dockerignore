@@ -1,0 +1,33 @@
+# Keep the build context small and the image clean. Note what is deliberately KEPT:
+# data/*.json (Boston scaffolding), figures/ (the ECF chart), runs/research_journal.jsonl
+# (the leaderboard). The observation store is excluded because the engine regenerates
+# it deterministically at startup.
+.git
+.venv
+**/__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.hypothesis
+
+# Secrets must never enter the image. The demo needs no keys.
+.env
+.env.*
+*.key
+
+# Regenerated at runtime, or bulk source data fetched by the loaders.
+*.duckdb
+data/observations/
+data/nppes/
+data/rxnorm/
+data/arcos/
+data/fda_ashp/
+data/nadac/
+
+# Audio scratch + OS cruft.
+*.wav
+*.mp3
+audio_scratch/
+.DS_Store
+.idea/
+.vscode/

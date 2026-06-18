@@ -61,6 +61,18 @@ class TTSBody(BaseModel):
     voice_id: str | None = None
 
 
+@app.get("/api/config")
+def config() -> dict:
+    """Front-end feature flags. Voice (mic speech-to-text + spoken replies) is on
+    only when it is not explicitly disabled AND both provider keys are present. The
+    public demo runs typed-only (CALLBUDGET_VOICE=0, no keys), so no audio API is
+    ever called and nothing can run up a bill. The typed conversation runs the same
+    dialogue brain either way."""
+    disabled = os.environ.get("CALLBUDGET_VOICE", "").strip() == "0"
+    keyed = bool(os.environ.get("DEEPGRAM_API_KEY") and os.environ.get("CARTESIA_API_KEY"))
+    return {"voice": (not disabled) and keyed}
+
+
 @app.get("/api/predict")
 def predict() -> list[dict]:
     """Pharmacies ranked by predicted P(in_stock)."""

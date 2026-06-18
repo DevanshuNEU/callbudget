@@ -1,0 +1,25 @@
+# CallBudget public demo (typed-only, offline). No secrets needed: the demo runs
+# without any API key by design. First deploy:
+#   fly launch --no-deploy --copy-config --name callbudget-demo   # create the app
+#   fly deploy                                                    # build + ship
+# Scales to zero when idle (min_machines_running = 0) so it costs ~nothing at rest;
+# a request cold-starts a machine, which re-seeds the engine in a few seconds.
+app = "callbudget-demo"
+primary_region = "bos"
+
+[build]
+
+[env]
+  CALLBUDGET_OFFLINE = "1"
+  CALLBUDGET_VOICE = "0"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
