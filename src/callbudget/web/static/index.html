@@ -196,8 +196,9 @@
         </p>
 
         <button id="micBtn" class="mic-btn" title="Start the call">&#127908;</button>
+        <button id="startBtn" class="go" style="display:none; height:44px; padding:0 22px">Start the call</button>
         <div id="micLabel" class="mic-label">Start the call</div>
-        <div class="mic-hint">Push to talk: tap the mic to start, tap again to send. Real Deepgram speech-to-text + Cartesia voice, or type your replies.</div>
+        <div id="micHint" class="mic-hint">Push to talk: tap the mic to start, tap again to send. Real Deepgram speech-to-text + Cartesia voice, or type your replies.</div>
 
         <div id="convo" class="convo"></div>
 
@@ -338,6 +339,25 @@
 
     let history = [], callActive = false, recording = false, speaking = false;
     let micStream = null, recorder = null, chunks = [];
+    let VOICE = true;  // set from /api/config; the public demo is typed-only.
+    const startBtn = document.getElementById("startBtn");
+    const micHint = document.getElementById("micHint");
+
+    // Voice (mic + spoken replies) is on only when the server says so. The public
+    // demo runs typed-only: hide the mic, show a plain "Start the call" button, and
+    // never call the speech APIs. The typed conversation is the same dialogue brain.
+    async function loadConfig() {
+      try { const c = await api("/api/config"); VOICE = !!c.voice; }
+      catch (e) { VOICE = false; }
+      if (!VOICE) {
+        micBtn.style.display = "none";
+        micLabel.style.display = "none";
+        startBtn.style.display = "inline-block";
+        micHint.textContent =
+          "Type your replies as the pharmacist. This public demo is typed-only — no audio, so no speech API is ever called.";
+      }
+    }
+    startBtn.addEventListener("click", () => { if (!callActive) { startCall(); textIn.focus(); } });
 
     function addBubble(role, text) {
       const div = document.createElement("div");
@@ -393,6 +413,7 @@
     }
 
     async function speak(text) {
+      if (!VOICE) return;  // typed-only demo: never call the TTS API
       speaking = true; setStatus("speaking");
       try {
         const r = await fetch("/api/tts", {
@@ -513,6 +534,7 @@
       }
     }
 
+    loadConfig();
     loadPredict();
     loadPlan();
     loadEval();

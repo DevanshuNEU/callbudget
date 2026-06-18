@@ -1,9 +1,24 @@
 # CallBudget
 
-**Pharmacy medication search as active sensing under a calling budget.** Predict
-which pharmacy most likely has a hard-to-find drug, call the most-likely ones
-first, learn from every call. A voice agent does the calling and turns the messy
-spoken answer into structured data, abstaining instead of guessing when unsure.
+**Finding a drug that is in shortage should not mean calling twenty pharmacies by
+hand.** During the national Adderall shortage, a patient (or the clinic calling for
+them) phones pharmacy after pharmacy, because no system can tell you which one has it
+in stock right now. That rail was never built: e-prescribing carries prescriptions,
+not shelf state, and inventory sits in siloed on-prem pharmacy systems.
+
+CallBudget is the missing layer, framed as **active sensing under a calling budget**:
+predict which pharmacy most likely has the drug, call the most-likely ones first, and
+learn from every call. A voice agent does the calling and turns the messy spoken
+answer into structured data, abstaining instead of guessing when unsure, because a
+wrong "yes, in stock" sends a patient to an empty pharmacy. Every call sharpens the
+next search: more calls, fewer calls-to-find. The calling is the commodity; the
+labeled, decaying, store-level stock data is the moat.
+
+> **Honest by construction.** Built on free + synthetic data, zero PHI. The
+> scaffolding is real (which pharmacies exist, the drug identity, the shortage
+> window); the per-call in-stock outcomes are simulated, because real-time
+> shelf-stock data does not exist anywhere. That gap is the premise, not a shortcut.
+> See "What is real vs synthetic" below.
 
 ![ECF flywheel](figures/ecf_flywheel.png)
 
@@ -101,11 +116,30 @@ with a typed fallback), the safety metrics, the chart, and the auto-research
 leaderboard. The voice needs Deepgram + Cartesia keys in `.env`; without them the
 conversation still works by typing.
 
+### Public demo (typed-only, zero-cost, offline)
+
+The repo ships a container that runs the showcase with **no API keys at all**: the
+engine seeds its synthetic world deterministically from the committed Boston
+scaffolding, the conversation runs the offline dialogue brain, and the mic + spoken
+replies are turned off (`CALLBUDGET_VOICE=0`), so no paid speech API is ever called.
+That is the build behind the live link, and it cannot run up a bill.
+
+```bash
+fly launch --no-deploy --copy-config --name callbudget-demo   # first time: create the app
+fly deploy                                                    # build (remote builder) + ship
+```
+
+It scales to zero when idle, so it costs ~nothing at rest; a request cold-starts a
+machine and re-seeds the engine in a few seconds.
+
 ## MCP server
 
-CallBudget exposes its engine over MCP (`predict_stock` / `plan_calls` / `run_eval`)
-so an agent can call it as a tool. See `docs/mcp-usage.md` for the tools and example
-prompts. Run it with `uv run python -m callbudget.mcp.server`.
+CallBudget exposes its engine over MCP (`predict_stock` / `plan_calls` / `run_eval` /
+`converse`) so an agent can call it as a tool: rank pharmacies, plan the cheapest call
+order, check whether it beats random, and actually hold the stock call with calibrated
+abstention. See `docs/mcp-usage.md` for the tools, example prompts, and **a real
+reproducible transcript of what the agent sees**. Run it with
+`uv run python -m callbudget.mcp.server`.
 
 ## Configuration (env)
 
