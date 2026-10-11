@@ -52,10 +52,11 @@ flywheel.
 ## What is real vs synthetic (the integrity boundary)
 
 - **Real:** which pharmacies exist (NPPES), the drug identity (RxNorm RxCUI
-  861226), the throughput *shape* (ARCOS opioid distribution), the Adderall
-  shortage window (FDA/ASHP).
+  861226), the Adderall shortage window (openFDA).
 - **Synthetic:** the per-call in-stock *outcomes*, because real-time shelf-stock
-  data is exactly what does not exist anywhere (that is the project's premise).
+  data is exactly what does not exist anywhere (that is the project's premise),
+  and per-pharmacy throughput, drawn from a seeded lognormal chosen to resemble
+  ARCOS distribution data (`load_arcos_throughput`; no ARCOS data is loaded).
 - The chart demonstrates the *mechanism on realistic inputs*; it is not a claim
   about real Boston stock rates. ARCOS (opioids) is a same-DEA-schedule
   *throughput* proxy, never an Adderall-specific signal.
@@ -152,9 +153,19 @@ A wrong "in stock" sends a patient to an empty pharmacy, so the headline metric
 is **false-positive-in-stock** (`P(said yes | truth no)`), not raw accuracy. The
 extractor abstains on ambiguity and on self-consistency disagreement. In the
 reliability ablation, under a deliberately unreliable extractor (25% misread),
-self-consistency drives false-positive-in-stock from ~10% to ~0%, trading
+self-consistency drives false-positive-in-stock from 10.2% to 0%, trading
 coverage (more re-calls) for safety. See `uv run callbudget eval` and
-`scripts/reliability_ablation.py`.
+`scripts/reliability_ablation.py` (19 pharmacies x 20 trials, 380 calls):
+
+| Samples | False "in stock" | Abstained | Decided accuracy |
+|---------|------------------|-----------|------------------|
+| 1 | 10.2% | 26.6% | 78.1% |
+| 3 | 0.0% | 69.2% | 100% |
+| 5 | 0.0% | 51.3% | 99.5% |
+
+Five samples keep the false-positive rate at zero while abstaining on far fewer
+calls than three. Voting runs in the extractor and the evals; the live Pipecat
+call currently abstains only when the answer comes back unknown.
 
 ## Auto-research loop
 
@@ -177,13 +188,13 @@ uv run callbudget research
 ```
 
 **The honest result, and why the guards are the deliverable.** On this synthetic
-problem the loop's in-sample ECF gains (~10-15%) do **not** survive held-out
+problem the loop's in-sample ECF gain (9.8%: 2.86 vs 3.17) does **not** survive held-out
 validation: the loop optimises on a set of search seeds and re-scores the winner
 on a disjoint set of validation seeds, and there the winner's advantage falls
 inside world-to-world noise. So the loop **recommends keeping the v1 defaults**.
 That is the point. The deliverable is not a headline ECF win; it is (1) the
-**safety constraint**, which rejects unsafe configs including the lowest-ECF one,
-and (2) the **validation guard**, which refuses to ship an overfit in-sample gain.
+**safety constraint**, which rejected 3 of 14 trials for breaching the
+false-positive bar, and (2) the **validation guard**, which refuses to ship an overfit in-sample gain.
 This is the same honesty boundary as the rest of the project applied to the
 research process itself: outcomes are synthetic, so the loop proves the **search
 mechanism** on realistic inputs, never a real stock-rate gain.
